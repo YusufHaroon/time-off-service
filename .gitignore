@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# environment files
+.env
+.env.test
+.env.local
+
+# database
+data/
+
+# coverage
+coverage/
+
+# logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
