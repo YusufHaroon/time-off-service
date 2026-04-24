@@ -6,7 +6,6 @@ import {
   UnprocessableEntityException,
   ConflictException,
 } from '@nestjs/common';
-import { OptimisticLockVersionMismatchError } from 'typeorm';
 import { Balance, LeaveType } from '../entities/balance.entity';
 import { AuditLog, AuditEntityType, AuditAction, AuditSource } from '../entities/audit-log.entity';
 import { AuditService } from '../audit/audit.service';
@@ -121,16 +120,23 @@ describe('BalanceService', () => {
     it('retries on version conflict and eventually throws ConflictException', async () => {
       const bal = await seed({ totalDays: 20 });
 
-      const saveSpy = jest
-        .spyOn(balanceRepo, 'save')
-        .mockRejectedValue(new OptimisticLockVersionMismatchError('Balance', 1, 2));
+      const executeMock = jest.fn().mockResolvedValue({ affected: 0 });
+      const qbMock = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        execute: executeMock,
+      };
+      const createQBSpy = jest.spyOn(balanceRepo, 'createQueryBuilder').mockReturnValue(qbMock);
 
-      await expect(
-        service.deduct(bal.id, 5, 'actor', AuditSource.USER),
-      ).rejects.toThrow(ConflictException);
-
-      expect(saveSpy).toHaveBeenCalledTimes(3);
-      saveSpy.mockRestore();
+      try {
+        await expect(
+          service.deduct(bal.id, 5, 'actor', AuditSource.USER),
+        ).rejects.toThrow(ConflictException);
+        expect(executeMock).toHaveBeenCalledTimes(3);
+      } finally {
+        createQBSpy.mockRestore();
+      }
     });
   });
 

@@ -4,7 +4,6 @@ import {
   UnprocessableEntityException,
   ConflictException,
 } from '@nestjs/common';
-import { OptimisticLockVersionMismatchError } from 'typeorm';
 import { AuditEntityType, AuditAction } from '../entities/audit-log.entity';
 
 const MAX_RETRIES = 3;
@@ -33,6 +32,12 @@ export class BalanceService {
     return this.balanceRepo.find({ where: { employeeId } });
   }
 
+  /**
+   * Atomically checks available balance and moves `days` into pendingDays.
+   * Uses an optimistic-lock loop: reads the current version, then issues an
+   * UPDATE … WHERE id = ? AND version = ? so that a concurrent write causes
+   * 0 affected rows, triggering a retry.
+   */
   async deduct(balanceId, days, actor, source) {
     let attempts = 0;
 
@@ -46,10 +51,18 @@ export class BalanceService {
         );
       }
 
-      balance.pendingDays = Number(balance.pendingDays) + days;
+      const newPendingDays = Number(balance.pendingDays) + days;
+      const newVersion = Number(balance.version) + 1;
 
-      try {
-        const saved = await this.balanceRepo.save(balance);
+      const result = await this.balanceRepo
+        .createQueryBuilder()
+        .update()
+        .set({ pendingDays: newPendingDays, version: newVersion })
+        .where('id = :id AND version = :version', { id: balanceId, version: balance.version })
+        .execute();
+
+      if (result.affected > 0) {
+        const saved = await this.balanceRepo.findOneBy({ id: balanceId });
         await this.auditService.log({
           entityType: AuditEntityType.BALANCE,
           entityId: balanceId,
@@ -59,72 +72,125 @@ export class BalanceService {
           source,
         });
         return saved;
-      } catch (err) {
-        if (err instanceof OptimisticLockVersionMismatchError) {
-          attempts++;
-          await sleep(Math.floor(Math.random() * 50));
-          continue;
-        }
-        throw err;
       }
+
+      attempts++;
+      await sleep(Math.floor(Math.random() * 50));
     }
 
     throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
   }
 
   async confirmDeduction(balanceId, days, actor, source) {
-    const balance = await this.balanceRepo.findOneBy({ id: balanceId });
-    if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
+    let attempts = 0;
 
-    balance.pendingDays = Math.max(0, Number(balance.pendingDays) - days);
-    balance.usedDays = Number(balance.usedDays) + days;
+    while (attempts < MAX_RETRIES) {
+      const balance = await this.balanceRepo.findOneBy({ id: balanceId });
+      if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
-    const saved = await this.balanceRepo.save(balance);
-    await this.auditService.log({
-      entityType: AuditEntityType.BALANCE,
-      entityId: balanceId,
-      action: AuditAction.UPDATED,
-      deltaDays: days,
-      actor,
-      source,
-    });
-    return saved;
+      const newPendingDays = Math.max(0, Number(balance.pendingDays) - days);
+      const newUsedDays = Number(balance.usedDays) + days;
+      const newVersion = Number(balance.version) + 1;
+
+      const result = await this.balanceRepo
+        .createQueryBuilder()
+        .update()
+        .set({ pendingDays: newPendingDays, usedDays: newUsedDays, version: newVersion })
+        .where('id = :id AND version = :version', { id: balanceId, version: balance.version })
+        .execute();
+
+      if (result.affected > 0) {
+        const saved = await this.balanceRepo.findOneBy({ id: balanceId });
+        await this.auditService.log({
+          entityType: AuditEntityType.BALANCE,
+          entityId: balanceId,
+          action: AuditAction.UPDATED,
+          deltaDays: days,
+          actor,
+          source,
+        });
+        return saved;
+      }
+
+      attempts++;
+      await sleep(Math.floor(Math.random() * 50));
+    }
+
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
   }
 
   async restore(balanceId, days, actor, source) {
-    const balance = await this.balanceRepo.findOneBy({ id: balanceId });
-    if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
+    let attempts = 0;
 
-    balance.usedDays = Math.max(0, Number(balance.usedDays) - days);
+    while (attempts < MAX_RETRIES) {
+      const balance = await this.balanceRepo.findOneBy({ id: balanceId });
+      if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
-    const saved = await this.balanceRepo.save(balance);
-    await this.auditService.log({
-      entityType: AuditEntityType.BALANCE,
-      entityId: balanceId,
-      action: AuditAction.RESTORED,
-      deltaDays: days,
-      actor,
-      source,
-    });
-    return saved;
+      const newUsedDays = Math.max(0, Number(balance.usedDays) - days);
+      const newVersion = Number(balance.version) + 1;
+
+      const result = await this.balanceRepo
+        .createQueryBuilder()
+        .update()
+        .set({ usedDays: newUsedDays, version: newVersion })
+        .where('id = :id AND version = :version', { id: balanceId, version: balance.version })
+        .execute();
+
+      if (result.affected > 0) {
+        const saved = await this.balanceRepo.findOneBy({ id: balanceId });
+        await this.auditService.log({
+          entityType: AuditEntityType.BALANCE,
+          entityId: balanceId,
+          action: AuditAction.RESTORED,
+          deltaDays: days,
+          actor,
+          source,
+        });
+        return saved;
+      }
+
+      attempts++;
+      await sleep(Math.floor(Math.random() * 50));
+    }
+
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
   }
 
   async releasePending(balanceId, days, actor, source) {
-    const balance = await this.balanceRepo.findOneBy({ id: balanceId });
-    if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
+    let attempts = 0;
 
-    balance.pendingDays = Math.max(0, Number(balance.pendingDays) - days);
+    while (attempts < MAX_RETRIES) {
+      const balance = await this.balanceRepo.findOneBy({ id: balanceId });
+      if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
-    const saved = await this.balanceRepo.save(balance);
-    await this.auditService.log({
-      entityType: AuditEntityType.BALANCE,
-      entityId: balanceId,
-      action: AuditAction.RESTORED,
-      deltaDays: days,
-      actor,
-      source,
-    });
-    return saved;
+      const newPendingDays = Math.max(0, Number(balance.pendingDays) - days);
+      const newVersion = Number(balance.version) + 1;
+
+      const result = await this.balanceRepo
+        .createQueryBuilder()
+        .update()
+        .set({ pendingDays: newPendingDays, version: newVersion })
+        .where('id = :id AND version = :version', { id: balanceId, version: balance.version })
+        .execute();
+
+      if (result.affected > 0) {
+        const saved = await this.balanceRepo.findOneBy({ id: balanceId });
+        await this.auditService.log({
+          entityType: AuditEntityType.BALANCE,
+          entityId: balanceId,
+          action: AuditAction.RESTORED,
+          deltaDays: days,
+          actor,
+          source,
+        });
+        return saved;
+      }
+
+      attempts++;
+      await sleep(Math.floor(Math.random() * 50));
+    }
+
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
   }
 
   async upsert(employeeId, locationId, leaveType, totalDays, usedDays, source) {

@@ -50,8 +50,13 @@
       "js",
       "json"
     ],
-    "rootDir": "src",
+    "rootDir": ".",
+    "roots": [
+      "<rootDir>/src",
+      "<rootDir>/test/mock-hcm",
+      "<rootDir>/test/concurrency"
+    ],
     "testRegex": ".spec.js$",
-    "coverageDirectory": "../coverage"
+    "coverageDirectory": "<rootDir>/coverage"
   }
 }
