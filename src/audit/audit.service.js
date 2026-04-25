@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { AuditLog } from '../entities/audit-log.entity';
 
 @Injectable()
@@ -6,6 +6,7 @@ export class AuditService {
   /** @param {import('typeorm').Repository<AuditLog>} auditLogRepo */
   constructor(auditLogRepo) {
     this.auditLogRepo = auditLogRepo;
+    this.logger = new Logger(AuditService.name);
   }
 
   /**

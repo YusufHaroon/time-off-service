@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
   ConflictException,
@@ -17,6 +18,7 @@ export class RequestService {
     this.hcmClientService = hcmClientService;
     this.auditService = auditService;
     this.maxRetryAttempts = Number(maxRetryAttempts ?? 5);
+    this.logger = new Logger(RequestService.name);
   }
 
   // ---------------------------------------------------------------------------
@@ -48,6 +50,8 @@ export class RequestService {
     await this.requestRepo.save(request);
     await this._logRequest(request.id, AuditAction.CREATED, actorId, AuditSource.USER);
 
+    this.logger.log(`Request ${request.id} created for employee ${employeeId}`);
+
     // 5. Notify HCM
     try {
       const { hcmReferenceId } = await this.hcmClientService.postDeduction(
@@ -59,11 +63,13 @@ export class RequestService {
     } catch (err) {
       if (err instanceof ServiceUnavailableException) {
         // Queue for background retry — do not throw
+        this.logger.warn(`HCM unavailable for request ${request.id}, queued as PENDING_HCM`);
         request.status = RequestStatus.PENDING_HCM;
         await this.requestRepo.save(request);
         await this._logRequest(request.id, AuditAction.UPDATED, actorId, AuditSource.USER);
       } else {
         // Hard HCM error — release balance and surface failure
+        this.logger.error(`HCM hard error for request ${request.id}: ${err.message}`);
         await this.balanceService.releasePending(balance.id, daysRequested, actorId, AuditSource.USER);
         request.status = RequestStatus.FAILED;
         await this.requestRepo.save(request);
@@ -111,6 +117,8 @@ export class RequestService {
     const request = await this.findOne(id);
     const { status, rejectionReason, managerId } = dto;
     const source = AuditSource.USER;
+
+    this.logger.log(`Updating request ${id} status to ${status}`);
 
     if (managerId) request.managerId = managerId;
 
@@ -201,12 +209,17 @@ export class RequestService {
       },
     });
 
+    if (toRetry.length > 0) {
+      this.logger.log(`Retrying ${toRetry.length} pending HCM request(s)`);
+    }
+
     for (const request of toRetry) {
       const balance = await this.balanceService
         .getBalance(request.employeeId, request.locationId, request.leaveType)
         .catch(() => null);
 
       try {
+        this.logger.warn(`Retrying HCM for request ${request.id} (attempt ${request.retryCount + 1}/${this.maxRetryAttempts})`);
         const { hcmReferenceId } = await this.hcmClientService.postDeduction(
           request.employeeId, request.locationId, request.leaveType,
           Number(request.daysRequested), request.id,
@@ -223,6 +236,7 @@ export class RequestService {
       } catch {
         request.retryCount += 1;
         if (request.retryCount >= this.maxRetryAttempts) {
+          this.logger.error(`HCM retry exhausted for request ${request.id}, marking FAILED`);
           request.status = RequestStatus.FAILED;
           await this.requestRepo.save(request);
           if (balance) {

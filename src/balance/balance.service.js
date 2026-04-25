@@ -1,19 +1,21 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
   ConflictException,
 } from '@nestjs/common';
 import { AuditEntityType, AuditAction } from '../entities/audit-log.entity';
 
-const MAX_RETRIES = 3;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 @Injectable()
 export class BalanceService {
-  constructor(balanceRepo, auditService) {
+  constructor(balanceRepo, auditService, maxLockRetries = 3) {
     this.balanceRepo = balanceRepo;
     this.auditService = auditService;
+    this.maxLockRetries = maxLockRetries;
+    this.logger = new Logger(BalanceService.name);
   }
 
   async getBalance(employeeId, locationId, leaveType) {
@@ -41,7 +43,7 @@ export class BalanceService {
   async deduct(balanceId, days, actor, source) {
     let attempts = 0;
 
-    while (attempts < MAX_RETRIES) {
+    while (attempts < this.maxLockRetries) {
       const balance = await this.balanceRepo.findOneBy({ id: balanceId });
       if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
@@ -75,16 +77,18 @@ export class BalanceService {
       }
 
       attempts++;
+      this.logger.warn(`Optimistic lock conflict for balance ${balanceId}, retrying (${attempts}/${this.maxLockRetries})`);
       await sleep(Math.floor(Math.random() * 50));
     }
 
-    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
+    this.logger.error(`Balance ${balanceId} update conflict after ${this.maxLockRetries} retries`);
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${this.maxLockRetries} retries`);
   }
 
   async confirmDeduction(balanceId, days, actor, source) {
     let attempts = 0;
 
-    while (attempts < MAX_RETRIES) {
+    while (attempts < this.maxLockRetries) {
       const balance = await this.balanceRepo.findOneBy({ id: balanceId });
       if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
@@ -113,16 +117,17 @@ export class BalanceService {
       }
 
       attempts++;
+      this.logger.warn(`Optimistic lock conflict for balance ${balanceId}, retrying (${attempts}/${this.maxLockRetries})`);
       await sleep(Math.floor(Math.random() * 50));
     }
 
-    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${this.maxLockRetries} retries`);
   }
 
   async restore(balanceId, days, actor, source) {
     let attempts = 0;
 
-    while (attempts < MAX_RETRIES) {
+    while (attempts < this.maxLockRetries) {
       const balance = await this.balanceRepo.findOneBy({ id: balanceId });
       if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
@@ -150,16 +155,17 @@ export class BalanceService {
       }
 
       attempts++;
+      this.logger.warn(`Optimistic lock conflict for balance ${balanceId}, retrying (${attempts}/${this.maxLockRetries})`);
       await sleep(Math.floor(Math.random() * 50));
     }
 
-    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${this.maxLockRetries} retries`);
   }
 
   async releasePending(balanceId, days, actor, source) {
     let attempts = 0;
 
-    while (attempts < MAX_RETRIES) {
+    while (attempts < this.maxLockRetries) {
       const balance = await this.balanceRepo.findOneBy({ id: balanceId });
       if (!balance) throw new NotFoundException(`Balance ${balanceId} not found`);
 
@@ -187,10 +193,11 @@ export class BalanceService {
       }
 
       attempts++;
+      this.logger.warn(`Optimistic lock conflict for balance ${balanceId}, retrying (${attempts}/${this.maxLockRetries})`);
       await sleep(Math.floor(Math.random() * 50));
     }
 
-    throw new ConflictException(`Balance ${balanceId} update conflict after ${MAX_RETRIES} retries`);
+    throw new ConflictException(`Balance ${balanceId} update conflict after ${this.maxLockRetries} retries`);
   }
 
   async upsert(employeeId, locationId, leaveType, totalDays, usedDays, source) {

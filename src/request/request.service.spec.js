@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { Test } from '@nestjs/testing';
 import { TypeOrmModule, getRepositoryToken } from '@nestjs/typeorm';
 import {
+  NotFoundException,
   UnprocessableEntityException,
   ConflictException,
   ServiceUnavailableException,
@@ -319,6 +320,151 @@ describe('RequestService', () => {
       const callArgs = mockHcmSvc.postDeduction.mock.calls;
       const calledForThis = callArgs.some((args) => args[4] === req.id);
       expect(calledForThis).toBe(false);
+    });
+
+    it('increments retryCount but keeps PENDING_HCM when below max retries', async () => {
+      const req = await seedRequest({ status: RequestStatus.PENDING_HCM, retryCount: 0 });
+      mockHcmSvc.postDeduction.mockRejectedValue(new ServiceUnavailableException('still down'));
+
+      await service.retryPendingHcm();
+
+      const updated = await requestRepo.findOneBy({ id: req.id });
+      expect(updated.retryCount).toBe(1);
+      expect(updated.status).toBe(RequestStatus.PENDING_HCM);
+    });
+
+    it('PENDING_HCM success skips confirmDeduction when balance lookup fails', async () => {
+      const req = await seedRequest({ status: RequestStatus.PENDING_HCM, retryCount: 0 });
+      mockBalanceSvc.getBalance.mockRejectedValue(new NotFoundException('missing'));
+      mockHcmSvc.postDeduction.mockResolvedValue({ hcmReferenceId: 'hcm-null-bal' });
+
+      await service.retryPendingHcm();
+
+      const updated = await requestRepo.findOneBy({ id: req.id });
+      expect(updated.status).toBe(RequestStatus.APPROVED);
+      expect(mockBalanceSvc.confirmDeduction).not.toHaveBeenCalled();
+    });
+
+    it('PENDING_HCM failure at max retries skips releasePending when balance is null', async () => {
+      const req = await seedRequest({ status: RequestStatus.PENDING_HCM, retryCount: MAX_RETRY - 1 });
+      mockBalanceSvc.getBalance.mockRejectedValue(new NotFoundException('missing'));
+      mockHcmSvc.postDeduction.mockRejectedValue(new ServiceUnavailableException('down'));
+
+      await service.retryPendingHcm();
+
+      const updated = await requestRepo.findOneBy({ id: req.id });
+      expect(updated.status).toBe(RequestStatus.FAILED);
+      expect(mockBalanceSvc.releasePending).not.toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // findAll()
+  // =========================================================================
+
+  describe('findAll()', () => {
+    it('returns empty page when no requests exist for filters', async () => {
+      const result = await service.findAll({ employeeId: 'nobody-special' });
+      expect(result.items).toHaveLength(0);
+      expect(result.total).toBe(0);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(20);
+    });
+
+    it('returns requests matching employeeId, locationId, leaveType, and status filters', async () => {
+      const emp = uid();
+      await seedRequest({ employeeId: emp, locationId: 'loc-a', leaveType: 'ANNUAL', status: RequestStatus.APPROVED });
+      const result = await service.findAll({
+        employeeId: emp,
+        locationId: 'loc-a',
+        leaveType: 'ANNUAL',
+        status: 'APPROVED',
+      });
+      expect(result.items.length).toBeGreaterThanOrEqual(1);
+      expect(result.items[0].employeeId).toBe(emp);
+    });
+
+    it('filters by startDateFrom and startDateTo', async () => {
+      const emp = uid();
+      await seedRequest({ employeeId: emp, startDate: '2026-07-01', endDate: '2026-07-05' });
+      const result = await service.findAll({
+        employeeId: emp,
+        startDateFrom: '2026-06-01',
+        startDateTo: '2026-08-01',
+      });
+      expect(result.items.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('respects page and limit parameters', async () => {
+      const result = await service.findAll({ page: 2, limit: 5 });
+      expect(result.page).toBe(2);
+      expect(result.limit).toBe(5);
+    });
+  });
+
+  // =========================================================================
+  // findOne()
+  // =========================================================================
+
+  describe('findOne()', () => {
+    it('returns a request by ID', async () => {
+      const req = await seedRequest();
+      const found = await service.findOne(req.id);
+      expect(found.id).toBe(req.id);
+    });
+
+    it('throws NotFoundException for an unknown ID', async () => {
+      await expect(service.findOne('does-not-exist')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // =========================================================================
+  // delete()
+  // =========================================================================
+
+  describe('delete()', () => {
+    it('removes a DRAFT request from the database', async () => {
+      const req = await seedRequest({ status: RequestStatus.DRAFT });
+      await service.delete(req.id, 'actor');
+      const found = await requestRepo.findOneBy({ id: req.id });
+      expect(found).toBeNull();
+    });
+
+    it('throws 422 when trying to delete a non-DRAFT request', async () => {
+      const req = await seedRequest({ status: RequestStatus.PENDING_APPROVAL });
+      await expect(service.delete(req.id, 'actor')).rejects.toThrow(UnprocessableEntityException);
+    });
+  });
+
+  // =========================================================================
+  // updateStatus() — additional branches
+  // =========================================================================
+
+  describe('updateStatus() — additional branches', () => {
+    it('throws 422 for an unsupported status transition', async () => {
+      const req = await seedRequest();
+      await expect(
+        service.updateStatus(req.id, { status: 'PENDING_HCM' }, 'actor'),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('CANCELLED on APPROVED request continues when HCM reversal fails', async () => {
+      const req = await seedRequest({ status: RequestStatus.APPROVED });
+      mockHcmSvc.postReversal.mockRejectedValue(new ServiceUnavailableException('HCM down'));
+
+      const result = await service.updateStatus(req.id, { status: 'CANCELLED' }, 'emp-1');
+      expect(result.status).toBe(RequestStatus.CANCELLED);
+    });
+
+    it('APPROVED passes managerId through to the request', async () => {
+      const req = await seedRequest();
+      const result = await service.updateStatus(
+        req.id,
+        { status: 'APPROVED', managerId: 'mgr-99' },
+        'mgr-99',
+      );
+      await new Promise((r) => setImmediate(r));
+      expect(result.managerId).toBe('mgr-99');
     });
   });
 });

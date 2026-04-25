@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
   ServiceUnavailableException,
@@ -19,6 +20,7 @@ export class HcmClientService {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.timeoutMs = Number(timeoutMs);
+    this.logger = new Logger(HcmClientService.name);
   }
 
   _headers() {
@@ -27,6 +29,7 @@ export class HcmClientService {
 
   _handleError(err) {
     const status = err?.response?.status;
+    this.logger.error(`HCM call failed (status=${status ?? 'network'}): ${err?.message}`);
     if (status === 404) {
       throw new NotFoundException('HCM: employee/location not found');
     }
