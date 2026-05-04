@@ -1,6 +1,6 @@
 # Time-Off Microservice
 
-## Overview
+## Complete Overview
 
 A NestJS microservice that manages employee time-off requests in coordination with an external HCM (Human Capital Management) system. Employees submit requests; the service validates against their leave balance (held in a local SQLite cache), deducts pending days optimistically, and synchronises the deduction with the HCM API. Managers approve or reject requests through the same service. A scheduled background job retries transient HCM failures and keeps the local balance cache in sync.
 
