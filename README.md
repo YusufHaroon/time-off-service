@@ -14,7 +14,7 @@ A NestJS microservice that manages employees time-off requests in coordination w
 - **class-validator / class-transformer** — DTO validation
 - **Jest 30** — unit, integration, and concurrency tests
 - **Nock** — HTTP mocking for HCM client tests
-- **Express mock HCM server** — in-process fake HCM for integration tests
+- **Express mock HCM server** — in-process fake HCM for integrations tests
 
 ## Prerequisites
 
