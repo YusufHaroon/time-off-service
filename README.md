@@ -8,7 +8,7 @@ A NestJS microservice that manages employees time-off requests in coordination w
 
 - **NestJS 11** (plain JavaScript + Babel — no TypeScript)
 - **SQLite** via TypeORM + better-sqlite3 (in-memory for tests)
-- **@nestjs/config** — environment-variable management via ConfigService
+- **@nestjs/config** — Environment-variable management via ConfigService
 - **@nestjs/schedule** — cron-based HCM retry/sync jobs
 - **@nestjs/axios** — HTTP client for HCM API calls
 - **class-validator / class-transformer** — DTO validation
