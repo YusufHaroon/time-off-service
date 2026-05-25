@@ -6,7 +6,7 @@ This project is a NestJS microservice that manages employees time-off requests i
 
 ## Tech Stack
 
-- **NestJS 11** (plain JavaScript + Babel and no TypeScript)
+- **NestJS 11** (plain JavaScript + Babel + no TypeScript)
 - **SQLite** via TypeORM + better-sqlite3 (in-memory for tests)
 - **@nestjs/config** — Environment-variable management via ConfigService
 - **@nestjs/schedule** — cron-based HCM retry/sync jobs
