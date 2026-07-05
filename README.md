@@ -2,7 +2,7 @@
 
 ## Complete Overview
 
-This project is NestJS microservice that manages employees time-off requests in coordination with another external HCM (Human Capital Management) system. Employees submit requests and the service validates against their leave balance (held in a local SQLite cache), deducts pending days optimistically, and synchronises the deduction with the HCM API. Managers approve or reject requests through the same service. Scheduled background job retries transient HCM failures and keeps the local balance cache in sync
+This project is a NestJS microservice that manages employees time-off requests in coordination with another external HCM (Human Capital Management) system. Employees submit requests and the service validates against their leave balance (held in a local SQLite cache), deducts pending days optimistically, and synchronises the deduction with the HCM API. Managers approve or reject requests through the same service. Scheduled background job retries transient HCM failures and keeps the local balance cache in sync
 
 ## Tech Stack
 
